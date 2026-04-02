@@ -440,11 +440,11 @@ pub unsafe extern "C" fn lance_scanner_scan_async(
         ctx: callback_ctx,
     };
 
-    let stream_handle = handle.clone();
+    let ffi_stream_handle = handle.clone();
     handle.spawn(async move {
         let result = built_scanner.try_into_stream().await;
         match result {
-            Ok(stream) => match to_ffi_arrow_array_stream(stream, stream_handle) {
+            Ok(stream) => match to_ffi_arrow_array_stream(stream, ffi_stream_handle) {
                 Ok(ffi_stream) => {
                     let ptr = Box::into_raw(Box::new(ffi_stream));
                     send_cb.dispatch(0, ptr as *mut c_void);
