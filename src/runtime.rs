@@ -12,9 +12,8 @@ use crate::error::ffi_try;
 
 /// Global multi-threaded Tokio runtime, shared across all FFI calls.
 /// Initialized lazily on first access.
-static RT: LazyLock<RwLock<Option<tokio::runtime::Runtime>>> = LazyLock::new(|| {
-    RwLock::new(None)
-});
+pub(crate) static RT: LazyLock<RwLock<Option<tokio::runtime::Runtime>>> =
+    LazyLock::new(|| RwLock::new(None));
 
 fn create_runtime() -> Result<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_multi_thread()
@@ -82,6 +81,18 @@ pub extern "C" fn lance_init() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn lance_shutdown() -> i32 {
     ffi_try!(shutdown_inner(), neg)
+}
+
+pub(crate) fn runtime_handle() -> tokio::runtime::Handle {
+    ensure_runtime().expect("failed to initialize lance-c runtime");
+    let guard = RT
+        .read()
+        .expect("lance-c runtime lock poisoned while acquiring runtime handle");
+    guard
+        .as_ref()
+        .expect("lance-c runtime missing after initialization")
+        .handle()
+        .clone()
 }
 
 /// Block the current thread on an async future using the global runtime.

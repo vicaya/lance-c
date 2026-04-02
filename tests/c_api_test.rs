@@ -118,7 +118,12 @@ fn scan_all_rows(ds: *const LanceDataset) -> Vec<RecordBatch> {
     batches
 }
 
-fn create_fragment_inputs() -> (Arc<Schema>, RecordBatch, FFI_ArrowSchema, FFI_ArrowArrayStream) {
+fn create_fragment_inputs() -> (
+    Arc<Schema>,
+    RecordBatch,
+    FFI_ArrowSchema,
+    FFI_ArrowArrayStream,
+) {
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Int32, false),
         Field::new("name", DataType::Utf8, true),
@@ -146,7 +151,7 @@ fn finalize_single_spooled_fragment(spool_uri: &str, schema: &Schema) -> Dataset
 
     lance_c::runtime::block_on(async {
         let bootstrap = CommitBuilder::new(spool_uri)
-            .with_storage_format(LanceFileVersion::default())
+            .with_storage_format(LanceFileVersion::V2_2)
             .execute(
                 TransactionBuilder::new(
                     0,
@@ -168,7 +173,11 @@ fn finalize_single_spooled_fragment(spool_uri: &str, schema: &Schema) -> Dataset
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect::<Vec<_>>();
         entries.sort();
-        assert_eq!(entries.len(), 1, "expected exactly one spooled fragment file");
+        assert_eq!(
+            entries.len(),
+            1,
+            "expected exactly one spooled fragment file"
+        );
 
         let fragment = FileFragment::create_from_file(&entries[0], &bootstrap, 0, None)
             .await
@@ -224,8 +233,7 @@ fn test_fragment_create_and_finalize_with_rust_sdk() {
     let (schema, batch, ffi_schema, mut ffi_stream) = create_fragment_inputs();
 
     assert_eq!(lance_init(), 0);
-    let rc =
-        unsafe { lance_fragment_create(c_spool_uri.as_ptr(), &ffi_schema, &mut ffi_stream) };
+    let rc = unsafe { lance_fragment_create(c_spool_uri.as_ptr(), &ffi_schema, &mut ffi_stream) };
     assert_eq!(rc, 0);
 
     let data_dir = spool_dir.path().join("data");
@@ -255,8 +263,7 @@ fn test_fragment_create_rejects_non_local_uri() {
     let c_spool_uri = c_str("memory:///spool");
     let (_schema, _batch, ffi_schema, mut ffi_stream) = create_fragment_inputs();
 
-    let rc =
-        unsafe { lance_fragment_create(c_spool_uri.as_ptr(), &ffi_schema, &mut ffi_stream) };
+    let rc = unsafe { lance_fragment_create(c_spool_uri.as_ptr(), &ffi_schema, &mut ffi_stream) };
     assert_eq!(rc, -1);
     assert_eq!(lance_last_error_code(), LanceErrorCode::InvalidArgument);
 }

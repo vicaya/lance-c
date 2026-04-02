@@ -23,7 +23,7 @@ use crate::batch::LanceBatch;
 use crate::dataset::LanceDataset;
 use crate::error::{LanceErrorCode, clear_last_error, ffi_try, set_lance_error, set_last_error};
 use crate::helpers;
-use crate::runtime::{RT, block_on};
+use crate::runtime::{block_on, runtime_handle};
 
 /// Opaque scanner handle. Stores configuration until stream materialization.
 pub struct LanceScanner {
@@ -308,7 +308,7 @@ unsafe fn scanner_to_arrow_stream_inner(
     let s = unsafe { &*scanner };
     let built_scanner = s.build_scanner()?;
     let stream = block_on(built_scanner.try_into_stream())?;
-    let ffi_stream = to_ffi_arrow_array_stream(stream, RT.handle().clone())?;
+    let ffi_stream = to_ffi_arrow_array_stream(stream, runtime_handle())?;
     unsafe {
         ptr::write_unaligned(out, ffi_stream);
     }
@@ -407,7 +407,7 @@ pub unsafe extern "C" fn lance_scanner_scan_async(
         }
     };
 
-    let handle = RT.handle().clone();
+    let handle = runtime_handle();
 
     // Wrap non-Send raw pointers for the async task.
     // Safety: The C caller guarantees callback_ctx remains valid until callback fires.
@@ -428,7 +428,7 @@ pub unsafe extern "C" fn lance_scanner_scan_async(
         ctx: callback_ctx,
     };
 
-    RT.spawn(async move {
+    runtime_handle().spawn(async move {
         let result = built_scanner.try_into_stream().await;
         match result {
             Ok(stream) => match to_ffi_arrow_array_stream(stream, handle) {
@@ -496,7 +496,8 @@ pub unsafe extern "C" fn lance_scanner_poll_next(
 
     // Enter the Tokio runtime context so internal I/O futures can access
     // the reactor. Without this, polling from a non-Tokio thread panics.
-    let _guard = RT.enter();
+    let handle = runtime_handle();
+    let _guard = handle.enter();
 
     match stream.as_mut().poll_next(&mut cx) {
         Poll::Ready(Some(Ok(batch))) => {

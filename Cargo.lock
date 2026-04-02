@@ -3214,6 +3214,7 @@ dependencies = [
  "lance",
  "lance-core",
  "lance-datagen",
+ "lance-file",
  "lance-io",
  "log",
  "pin-project",
