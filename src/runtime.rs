@@ -78,26 +78,34 @@ pub extern "C" fn lance_shutdown() -> i32 {
     ffi_try!(shutdown_inner(), neg)
 }
 
-pub(crate) fn runtime_handle() -> tokio::runtime::Handle {
-    ensure_runtime().expect("failed to initialize lance-c runtime");
-    let guard = RT
-        .read()
-        .expect("lance-c runtime lock poisoned while acquiring runtime handle");
-    guard
-        .as_ref()
-        .expect("lance-c runtime missing after initialization")
-        .handle()
-        .clone()
+pub(crate) fn runtime_handle() -> Result<tokio::runtime::Handle> {
+    ensure_runtime()?;
+    let guard = RT.read().map_err(|_| Error::Internal {
+        message: "lance-c runtime lock poisoned while acquiring runtime handle".to_string(),
+        location: snafu::location!(),
+    })?;
+    let runtime = guard.as_ref().ok_or_else(|| Error::Internal {
+        message: "lance-c runtime missing after initialization".to_string(),
+        location: snafu::location!(),
+    })?;
+    Ok(runtime.handle().clone())
+}
+
+/// Block the current thread on an async future using the global runtime.
+pub(crate) fn try_block_on<F: std::future::Future>(f: F) -> Result<F::Output> {
+    ensure_runtime()?;
+    let guard = RT.read().map_err(|_| Error::Internal {
+        message: "lance-c runtime lock poisoned while acquiring runtime".to_string(),
+        location: snafu::location!(),
+    })?;
+    let runtime = guard.as_ref().ok_or_else(|| Error::Internal {
+        message: "lance-c runtime missing after initialization".to_string(),
+        location: snafu::location!(),
+    })?;
+    Ok(runtime.block_on(f))
 }
 
 /// Block the current thread on an async future using the global runtime.
 pub fn block_on<F: std::future::Future>(f: F) -> F::Output {
-    ensure_runtime().expect("failed to initialize lance-c runtime");
-    let guard = RT
-        .read()
-        .expect("lance-c runtime lock poisoned while acquiring runtime");
-    guard
-        .as_ref()
-        .expect("lance-c runtime missing after initialization")
-        .block_on(f)
+    try_block_on(f).expect("failed to execute future on lance-c runtime")
 }

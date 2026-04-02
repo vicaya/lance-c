@@ -23,7 +23,7 @@ use crate::batch::LanceBatch;
 use crate::dataset::LanceDataset;
 use crate::error::{LanceErrorCode, clear_last_error, ffi_try, set_lance_error, set_last_error};
 use crate::helpers;
-use crate::runtime::{block_on, runtime_handle};
+use crate::runtime::{runtime_handle, try_block_on};
 
 /// Opaque scanner handle. Stores configuration until stream materialization.
 pub struct LanceScanner {
@@ -110,7 +110,7 @@ impl LanceScanner {
             scanner.with_row_id();
         }
         self.apply_fragment_filter(&mut scanner)?;
-        let stream = block_on(scanner.try_into_stream())?;
+        let stream = try_block_on(scanner.try_into_stream())??;
         self.schema = Some(stream.schema());
         self.stream = Some(Box::pin(stream));
         Ok(())
@@ -307,8 +307,8 @@ unsafe fn scanner_to_arrow_stream_inner(
     }
     let s = unsafe { &*scanner };
     let built_scanner = s.build_scanner()?;
-    let stream = block_on(built_scanner.try_into_stream())?;
-    let ffi_stream = to_ffi_arrow_array_stream(stream, runtime_handle())?;
+    let stream = try_block_on(built_scanner.try_into_stream())??;
+    let ffi_stream = to_ffi_arrow_array_stream(stream, runtime_handle()?)?;
     unsafe {
         ptr::write_unaligned(out, ffi_stream);
     }
@@ -351,23 +351,28 @@ pub unsafe extern "C" fn lance_scanner_next(
     }
 
     let stream = s.stream.as_mut().unwrap();
-    match block_on(stream.next()) {
-        Some(Ok(batch)) => {
+    match try_block_on(stream.next()) {
+        Ok(Some(Ok(batch))) => {
             clear_last_error();
             let lance_batch = LanceBatch { inner: batch };
             unsafe { *out = Box::into_raw(Box::new(lance_batch)) };
             0
         }
-        Some(Err(err)) => {
+        Ok(Some(Err(err))) => {
             set_lance_error(&err);
             unsafe { *out = ptr::null_mut() };
             -1
         }
-        None => {
+        Ok(None) => {
             // End of stream
             clear_last_error();
             unsafe { *out = ptr::null_mut() };
             1
+        }
+        Err(err) => {
+            set_lance_error(&err);
+            unsafe { *out = ptr::null_mut() };
+            -1
         }
     }
 }
@@ -407,7 +412,14 @@ pub unsafe extern "C" fn lance_scanner_scan_async(
         }
     };
 
-    let handle = runtime_handle();
+    let handle = match runtime_handle() {
+        Ok(handle) => handle,
+        Err(err) => {
+            set_lance_error(&err);
+            async_dispatcher::dispatch_callback(callback, callback_ctx, -1, ptr::null_mut());
+            return;
+        }
+    };
 
     // Wrap non-Send raw pointers for the async task.
     // Safety: The C caller guarantees callback_ctx remains valid until callback fires.
@@ -428,10 +440,11 @@ pub unsafe extern "C" fn lance_scanner_scan_async(
         ctx: callback_ctx,
     };
 
-    runtime_handle().spawn(async move {
+    let stream_handle = handle.clone();
+    handle.spawn(async move {
         let result = built_scanner.try_into_stream().await;
         match result {
-            Ok(stream) => match to_ffi_arrow_array_stream(stream, handle) {
+            Ok(stream) => match to_ffi_arrow_array_stream(stream, stream_handle) {
                 Ok(ffi_stream) => {
                     let ptr = Box::into_raw(Box::new(ffi_stream));
                     send_cb.dispatch(0, ptr as *mut c_void);
@@ -496,7 +509,14 @@ pub unsafe extern "C" fn lance_scanner_poll_next(
 
     // Enter the Tokio runtime context so internal I/O futures can access
     // the reactor. Without this, polling from a non-Tokio thread panics.
-    let handle = runtime_handle();
+    let handle = match runtime_handle() {
+        Ok(handle) => handle,
+        Err(err) => {
+            set_lance_error(&err);
+            unsafe { *out = ptr::null_mut() };
+            return LancePollStatus::Error;
+        }
+    };
     let _guard = handle.enter();
 
     match stream.as_mut().poll_next(&mut cx) {

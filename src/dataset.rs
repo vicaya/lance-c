@@ -15,7 +15,7 @@ use lance_core::Result;
 
 use crate::error::{LanceErrorCode, ffi_try, set_last_error};
 use crate::helpers;
-use crate::runtime::block_on;
+use crate::runtime::try_block_on;
 
 /// Opaque handle representing an opened Lance dataset.
 pub struct LanceDataset {
@@ -68,7 +68,7 @@ unsafe fn open_dataset_inner(
         builder = builder.with_version(version);
     }
 
-    let dataset = block_on(builder.load())?;
+    let dataset = try_block_on(builder.load())??;
     let handle = LanceDataset {
         inner: Arc::new(dataset),
     };
@@ -110,12 +110,12 @@ pub unsafe extern "C" fn lance_dataset_count_rows(dataset: *const LanceDataset) 
         return 0;
     }
     let ds = unsafe { &*dataset };
-    match block_on(ds.inner.count_rows(None)) {
-        Ok(n) => {
+    match try_block_on(ds.inner.count_rows(None)) {
+        Ok(Ok(n)) => {
             crate::error::clear_last_error();
             n as u64
         }
-        Err(err) => {
+        Ok(Err(err)) | Err(err) => {
             crate::error::set_lance_error(&err);
             0
         }
@@ -131,12 +131,12 @@ pub unsafe extern "C" fn lance_dataset_latest_version(dataset: *const LanceDatas
         return 0;
     }
     let ds = unsafe { &*dataset };
-    match block_on(ds.inner.latest_version_id()) {
-        Ok(v) => {
+    match try_block_on(ds.inner.latest_version_id()) {
+        Ok(Ok(v)) => {
             crate::error::clear_last_error();
             v
         }
-        Err(err) => {
+        Ok(Err(err)) | Err(err) => {
             crate::error::set_lance_error(&err);
             0
         }
@@ -229,7 +229,7 @@ unsafe fn dataset_take_inner(
         None => lance::dataset::ProjectionRequest::from_schema(ds.inner.schema().clone()),
     };
 
-    let batch = block_on(ds.inner.take(idx_slice, projection))?;
+    let batch = try_block_on(ds.inner.take(idx_slice, projection))??;
 
     // Wrap the single RecordBatch as a RecordBatchReader, then export as FFI stream.
     let schema = batch.schema();

@@ -17,7 +17,7 @@ use snafu::location;
 
 use crate::error::ffi_try;
 use crate::helpers;
-use crate::runtime::block_on;
+use crate::runtime::try_block_on;
 
 fn validate_local_spool_uri(uri: &str) -> Result<()> {
     if uri.is_empty() {
@@ -27,8 +27,8 @@ fn validate_local_spool_uri(uri: &str) -> Result<()> {
         });
     }
 
-    // V1 only supports local filesystem targets. That includes plain local paths
-    // (relative or absolute) and file:// URIs, but rejects non-local schemes.
+    // This C API currently only supports local spool targets. That includes plain
+    // local paths (relative or absolute) and file:// URIs, but rejects non-local schemes.
     if uri.contains("://") && !uri.starts_with("file://") {
         return Err(Error::InvalidInput {
             source: "spool_uri must be a local path or file:// URI".into(),
@@ -61,7 +61,7 @@ unsafe fn fragment_create_inner(
 ) -> Result<i32> {
     if schema.is_null() || stream.is_null() {
         return Err(Error::InvalidInput {
-            source: "spool_uri, schema, and stream must not be NULL".into(),
+            source: "schema and stream must not be NULL".into(),
             location: location!(),
         });
     }
@@ -77,7 +77,7 @@ unsafe fn fragment_create_inner(
     let target_schema = LanceSchema::try_from(&arrow_schema)?;
     let reader = unsafe { ArrowArrayStreamReader::from_raw(stream) }?;
 
-    block_on(async move {
+    try_block_on(async move {
         let write_params = WriteParams::with_storage_version(LanceFileVersion::V2_2);
         FragmentCreateBuilder::new(spool_uri)
             .schema(&target_schema)
@@ -85,5 +85,5 @@ unsafe fn fragment_create_inner(
             .write(reader, Some(0))
             .await?;
         Ok(0)
-    })
+    })?
 }
