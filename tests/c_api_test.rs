@@ -226,6 +226,30 @@ fn test_runtime_init_shutdown_idempotent() {
 }
 
 #[test]
+fn test_shutdown_does_not_cancel_exported_stream() {
+    let (_tmp, uri) = create_test_dataset();
+    let c_uri = c_str(&uri);
+    let ds = unsafe { lance_dataset_open(c_uri.as_ptr(), ptr::null(), 0) };
+    assert!(!ds.is_null());
+
+    let scanner = unsafe { lance_scanner_new(ds, ptr::null(), ptr::null()) };
+    assert!(!scanner.is_null());
+
+    let mut ffi_stream = FFI_ArrowArrayStream::empty();
+    let rc = unsafe { lance_scanner_to_arrow_stream(scanner, &mut ffi_stream) };
+    assert_eq!(rc, 0);
+
+    assert_eq!(lance_shutdown(), 0);
+
+    let reader = unsafe { ArrowArrayStreamReader::from_raw(&mut ffi_stream) }.unwrap();
+    let total_rows: usize = reader.map(|r| r.unwrap().num_rows()).sum();
+    assert_eq!(total_rows, 5);
+
+    unsafe { lance_scanner_close(scanner) };
+    unsafe { lance_dataset_close(ds) };
+}
+
+#[test]
 fn test_fragment_create_and_finalize_with_rust_sdk() {
     let spool_dir = tempfile::tempdir().unwrap();
     let spool_uri = spool_dir.path().to_str().unwrap().to_string();

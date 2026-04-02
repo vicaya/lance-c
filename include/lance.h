@@ -94,7 +94,7 @@ void lance_free_string(const char* s);
 /** Lazily initialize the shared runtime used by async Lance I/O. */
 int32_t lance_init(void);
 
-/** Drain and drop the shared runtime. Safe to call multiple times. */
+/** Ensure the shared runtime remains available. Safe to call multiple times. */
 int32_t lance_shutdown(void);
 
 /* ─── Opaque handles ─── */

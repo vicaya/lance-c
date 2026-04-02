@@ -4,8 +4,6 @@
 //! Global Tokio runtime for the C FFI layer.
 
 use std::sync::{LazyLock, RwLock};
-use std::time::Duration;
-
 use lance_core::{Error, Result};
 
 use crate::error::ffi_try;
@@ -52,18 +50,11 @@ fn init_inner() -> Result<i32> {
 }
 
 fn shutdown_inner() -> Result<i32> {
-    let runtime = {
-        let mut guard = RT.write().map_err(|_| Error::Internal {
-            message: "runtime lock poisoned".to_string(),
-            location: snafu::location!(),
-        })?;
-        guard.take()
-    };
-
-    if let Some(runtime) = runtime {
-        runtime.shutdown_timeout(Duration::from_secs(30));
-    }
-
+    // ArrowArrayStream readers and other spawned I/O tasks can outlive the FFI call
+    // that created them. Dropping the shared runtime here cancels those tasks and
+    // breaks later stream consumption. Keep shutdown idempotent but do not tear down
+    // the process-global runtime once it has been initialized.
+    ensure_runtime()?;
     Ok(0)
 }
 
@@ -75,7 +66,11 @@ pub extern "C" fn lance_init() -> i32 {
     ffi_try!(init_inner(), neg)
 }
 
-/// Shut down and drop the shared Tokio runtime used by the C API.
+/// Ensure the shared Tokio runtime is available for the rest of the process.
+///
+/// This call is idempotent. It intentionally does not tear down the process-global
+/// runtime because exported Arrow streams can continue using it after the FFI call
+/// that created them returns.
 ///
 /// Returns 0 on success and -1 on error.
 #[unsafe(no_mangle)]
