@@ -7,6 +7,8 @@
 //! validating the C API contract without needing a C compiler.
 
 use std::ffi::CString;
+use std::fs;
+use std::path::Path;
 use std::ptr;
 use std::sync::Arc;
 
@@ -18,7 +20,12 @@ use arrow::record_batch::RecordBatchReader;
 use arrow_array::{Float32Array, Int32Array, RecordBatch, StringArray};
 use arrow_schema::{DataType, Field, Schema};
 use lance::Dataset;
+use lance::dataset::CommitBuilder;
+use lance::dataset::fragment::FileFragment;
+use lance::dataset::transaction::{Operation, TransactionBuilder};
 use lance_c::*;
+use lance_core::datatypes::Schema as LanceSchema;
+use lance_file::version::LanceFileVersion;
 
 /// Helper: create a test dataset in a temp directory and return its path.
 fn create_test_dataset() -> (tempfile::TempDir, String) {
@@ -111,6 +118,77 @@ fn scan_all_rows(ds: *const LanceDataset) -> Vec<RecordBatch> {
     batches
 }
 
+fn create_fragment_inputs() -> (Arc<Schema>, RecordBatch, FFI_ArrowSchema, FFI_ArrowArrayStream) {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::Int32, false),
+        Field::new("name", DataType::Utf8, true),
+    ]));
+
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![
+            Arc::new(Int32Array::from(vec![10, 20, 30])),
+            Arc::new(StringArray::from(vec!["alice", "bob", "carol"])),
+        ],
+    )
+    .unwrap();
+
+    let ffi_schema = FFI_ArrowSchema::try_from(schema.as_ref()).unwrap();
+    let reader =
+        arrow::record_batch::RecordBatchIterator::new(vec![Ok(batch.clone())], schema.clone());
+    let ffi_stream = FFI_ArrowArrayStream::new(Box::new(reader));
+
+    (schema, batch, ffi_schema, ffi_stream)
+}
+
+fn finalize_single_spooled_fragment(spool_uri: &str, schema: &Schema) -> Dataset {
+    let lance_schema = LanceSchema::try_from(schema).unwrap();
+
+    lance_c::runtime::block_on(async {
+        let bootstrap = CommitBuilder::new(spool_uri)
+            .with_storage_format(LanceFileVersion::default())
+            .execute(
+                TransactionBuilder::new(
+                    0,
+                    Operation::Overwrite {
+                        fragments: vec![],
+                        schema: lance_schema.clone(),
+                        config_upsert_values: None,
+                        initial_bases: None,
+                    },
+                )
+                .build(),
+            )
+            .await
+            .unwrap();
+
+        let data_dir = Path::new(spool_uri).join("data");
+        let mut entries = fs::read_dir(&data_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        entries.sort();
+        assert_eq!(entries.len(), 1, "expected exactly one spooled fragment file");
+
+        let fragment = FileFragment::create_from_file(&entries[0], &bootstrap, 0, None)
+            .await
+            .unwrap();
+
+        CommitBuilder::new(spool_uri)
+            .execute(
+                TransactionBuilder::new(
+                    bootstrap.manifest.version,
+                    Operation::Append {
+                        fragments: vec![fragment],
+                    },
+                )
+                .build(),
+            )
+            .await
+            .unwrap()
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Dataset tests
 // ---------------------------------------------------------------------------
@@ -128,6 +206,75 @@ fn test_open_close() {
 
     // Closing NULL is safe.
     unsafe { lance_dataset_close(ptr::null_mut()) };
+}
+
+#[test]
+fn test_runtime_init_shutdown_idempotent() {
+    assert_eq!(lance_init(), 0);
+    assert_eq!(lance_init(), 0);
+    assert_eq!(lance_shutdown(), 0);
+    assert_eq!(lance_shutdown(), 0);
+}
+
+#[test]
+fn test_fragment_create_and_finalize_with_rust_sdk() {
+    let spool_dir = tempfile::tempdir().unwrap();
+    let spool_uri = spool_dir.path().to_str().unwrap().to_string();
+    let c_spool_uri = c_str(&spool_uri);
+    let (schema, batch, ffi_schema, mut ffi_stream) = create_fragment_inputs();
+
+    assert_eq!(lance_init(), 0);
+    let rc =
+        unsafe { lance_fragment_create(c_spool_uri.as_ptr(), &ffi_schema, &mut ffi_stream) };
+    assert_eq!(rc, 0);
+
+    let data_dir = spool_dir.path().join("data");
+    assert!(data_dir.is_dir());
+    let files = fs::read_dir(&data_dir).unwrap().count();
+    assert_eq!(files, 1);
+
+    let dataset = finalize_single_spooled_fragment(&spool_uri, schema.as_ref());
+    let read_back = lance_c::runtime::block_on(dataset.scan().try_into_batch()).unwrap();
+    assert_eq!(read_back.num_rows(), batch.num_rows());
+    assert_eq!(
+        read_back.column(0).as_ref(),
+        batch.column(0).as_ref(),
+        "id column should round-trip",
+    );
+    assert_eq!(
+        read_back.column(1).as_ref(),
+        batch.column(1).as_ref(),
+        "name column should round-trip",
+    );
+
+    assert_eq!(lance_shutdown(), 0);
+}
+
+#[test]
+fn test_fragment_create_rejects_non_local_uri() {
+    let c_spool_uri = c_str("memory:///spool");
+    let (_schema, _batch, ffi_schema, mut ffi_stream) = create_fragment_inputs();
+
+    let rc =
+        unsafe { lance_fragment_create(c_spool_uri.as_ptr(), &ffi_schema, &mut ffi_stream) };
+    assert_eq!(rc, -1);
+    assert_eq!(lance_last_error_code(), LanceErrorCode::InvalidArgument);
+}
+
+#[test]
+fn test_fragment_create_requires_schema_and_stream() {
+    let spool_dir = tempfile::tempdir().unwrap();
+    let c_spool_uri = c_str(spool_dir.path().to_str().unwrap());
+    let (_schema, _batch, _ffi_schema, mut ffi_stream) = create_fragment_inputs();
+
+    let rc = unsafe { lance_fragment_create(c_spool_uri.as_ptr(), ptr::null(), &mut ffi_stream) };
+    assert_eq!(rc, -1);
+    assert_eq!(lance_last_error_code(), LanceErrorCode::InvalidArgument);
+
+    let (_, _, ffi_schema, _) = create_fragment_inputs();
+    let rc = unsafe { lance_fragment_create(c_spool_uri.as_ptr(), &ffi_schema, ptr::null_mut()) };
+    assert_eq!(rc, -1);
+    assert_eq!(lance_last_error_code(), LanceErrorCode::InvalidArgument);
 }
 
 #[test]

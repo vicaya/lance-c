@@ -19,6 +19,7 @@ mod async_dispatcher;
 mod batch;
 mod dataset;
 mod error;
+mod fragment;
 mod helpers;
 pub mod runtime;
 mod scanner;
@@ -29,4 +30,6 @@ pub use dataset::*;
 pub use error::{
     LanceErrorCode, lance_free_string, lance_last_error_code, lance_last_error_message,
 };
+pub use fragment::*;
+pub use runtime::{lance_init, lance_shutdown};
 pub use scanner::*;

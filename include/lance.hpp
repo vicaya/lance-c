@@ -46,6 +46,23 @@ inline void check_error() {
     }
 }
 
+inline void init() {
+    if (lance_init() != 0) check_error();
+}
+
+inline void shutdown() {
+    if (lance_shutdown() != 0) check_error();
+}
+
+inline void fragment_create(
+    const std::string& spool_uri,
+    const ArrowSchema* schema,
+    ArrowArrayStream* stream) {
+    if (lance_fragment_create(spool_uri.c_str(), schema, stream) != 0) {
+        check_error();
+    }
+}
+
 // ─── RAII Handle Template ────────────────────────────────────────────────────
 
 template <typename T, void (*Deleter)(T*)>

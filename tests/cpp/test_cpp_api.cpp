@@ -35,6 +35,17 @@ static void test_dataset_open(const std::string& uri) {
     PASS();
 }
 
+static void test_runtime_helpers() {
+    TEST(test_runtime_helpers);
+
+    lance::init();
+    lance::init();
+    lance::shutdown();
+    lance::shutdown();
+
+    PASS();
+}
+
 static void test_dataset_schema(const std::string& uri) {
     TEST(test_dataset_schema);
 
@@ -167,6 +178,7 @@ int main(int argc, char** argv) {
     printf("Running C++ API tests with dataset: %s\n", uri.c_str());
 
     test_dataset_open(uri);
+    test_runtime_helpers();
     test_dataset_schema(uri);
     test_scanner_fluent(uri);
     test_dataset_take(uri);

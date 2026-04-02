@@ -89,11 +89,35 @@ const char* lance_last_error_message(void);
 /** Free a string returned by lance_last_error_message(). */
 void lance_free_string(const char* s);
 
+/* ─── Runtime lifecycle ─── */
+
+/** Lazily initialize the shared runtime used by async Lance I/O. */
+int32_t lance_init(void);
+
+/** Drain and drop the shared runtime. Safe to call multiple times. */
+int32_t lance_shutdown(void);
+
 /* ─── Opaque handles ─── */
 
 typedef struct LanceDataset LanceDataset;
 typedef struct LanceScanner  LanceScanner;
 typedef struct LanceBatch    LanceBatch;
+
+/* ─── Fragment creation ─── */
+
+/**
+ * Create exactly one local fragment under spool_uri/data/.
+ *
+ * @param spool_uri  Local path or file:// URI for the fragment spool root
+ * @param schema     Explicit target schema
+ * @param stream     ArrowArrayStream consumed by this call
+ * @return 0 on success, -1 on error
+ */
+int32_t lance_fragment_create(
+    const char* spool_uri,
+    const struct ArrowSchema* schema,
+    struct ArrowArrayStream* stream
+);
 
 /* ─── Dataset lifecycle ─── */
 

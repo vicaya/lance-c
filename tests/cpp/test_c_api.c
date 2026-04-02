@@ -68,6 +68,23 @@ static void test_open_and_metadata(const char *uri) {
     printf("OK\n");
 }
 
+static void test_runtime_and_fragment_symbols(void) {
+    printf("  test_runtime_and_fragment_symbols... ");
+
+    ASSERT(lance_init() == 0, "lance_init should succeed");
+    ASSERT(lance_init() == 0, "lance_init should be idempotent");
+
+    ASSERT(lance_fragment_create("memory:///invalid", NULL, NULL) == -1,
+           "fragment_create should fail for invalid arguments");
+    ASSERT(lance_last_error_code() == LANCE_ERR_INVALID_ARGUMENT,
+           "fragment_create should set invalid argument");
+
+    ASSERT(lance_shutdown() == 0, "lance_shutdown should succeed");
+    ASSERT(lance_shutdown() == 0, "lance_shutdown should be idempotent");
+
+    printf("OK\n");
+}
+
 static void test_scan(const char *uri) {
     printf("  test_scan... ");
 
@@ -185,6 +202,7 @@ int main(int argc, char **argv) {
     printf("Running C API tests with dataset: %s\n", uri);
 
     test_open_and_metadata(uri);
+    test_runtime_and_fragment_symbols();
     test_scan(uri);
     test_scan_with_limit(uri);
     test_error_handling();
