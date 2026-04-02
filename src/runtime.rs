@@ -3,8 +3,8 @@
 
 //! Global Tokio runtime for the C FFI layer.
 
-use std::sync::{LazyLock, RwLock};
 use lance_core::{Error, Result};
+use std::sync::{LazyLock, RwLock};
 
 use crate::error::ffi_try;
 
@@ -92,16 +92,12 @@ pub(crate) fn runtime_handle() -> tokio::runtime::Handle {
 
 /// Block the current thread on an async future using the global runtime.
 pub fn block_on<F: std::future::Future>(f: F) -> F::Output {
-    let mut future = Some(f);
-    loop {
-        ensure_runtime().expect("failed to initialize lance-c runtime");
-        {
-            let guard = RT
-                .read()
-                .expect("lance-c runtime lock poisoned while acquiring runtime");
-            if let Some(runtime) = guard.as_ref() {
-                return runtime.block_on(future.take().expect("future already taken"));
-            }
-        }
-    }
+    ensure_runtime().expect("failed to initialize lance-c runtime");
+    let guard = RT
+        .read()
+        .expect("lance-c runtime lock poisoned while acquiring runtime");
+    guard
+        .as_ref()
+        .expect("lance-c runtime missing after initialization")
+        .block_on(f)
 }
