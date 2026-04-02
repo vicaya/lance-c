@@ -27,6 +27,8 @@ fn validate_local_spool_uri(uri: &str) -> Result<()> {
         });
     }
 
+    // V1 only supports local filesystem targets. That includes plain local paths
+    // (relative or absolute) and file:// URIs, but rejects non-local schemes.
     if uri.contains("://") && !uri.starts_with("file://") {
         return Err(Error::InvalidInput {
             source: "spool_uri must be a local path or file:// URI".into(),

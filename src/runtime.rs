@@ -99,6 +99,7 @@ pub(crate) fn runtime_handle() -> tokio::runtime::Handle {
 pub fn block_on<F: std::future::Future>(f: F) -> F::Output {
     let mut future = Some(f);
     loop {
+        ensure_runtime().expect("failed to initialize lance-c runtime");
         {
             let guard = RT
                 .read()
@@ -107,6 +108,5 @@ pub fn block_on<F: std::future::Future>(f: F) -> F::Output {
                 return runtime.block_on(future.take().expect("future already taken"));
             }
         }
-        ensure_runtime().expect("failed to initialize lance-c runtime");
     }
 }

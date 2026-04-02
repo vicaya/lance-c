@@ -146,7 +146,7 @@ fn create_fragment_inputs() -> (
     (schema, batch, ffi_schema, ffi_stream)
 }
 
-fn finalize_single_spooled_fragment(spool_uri: &str, schema: &Schema) -> Dataset {
+fn commit_spooled_fragment_as_dataset(spool_uri: &str, schema: &Schema) -> Dataset {
     let lance_schema = LanceSchema::try_from(schema).unwrap();
 
     lance_c::runtime::block_on(async {
@@ -241,7 +241,7 @@ fn test_fragment_create_and_finalize_with_rust_sdk() {
     let files = fs::read_dir(&data_dir).unwrap().count();
     assert_eq!(files, 1);
 
-    let dataset = finalize_single_spooled_fragment(&spool_uri, schema.as_ref());
+    let dataset = commit_spooled_fragment_as_dataset(&spool_uri, schema.as_ref());
     let read_back = lance_c::runtime::block_on(dataset.scan().try_into_batch()).unwrap();
     assert_eq!(read_back.num_rows(), batch.num_rows());
     assert_eq!(
