@@ -1443,6 +1443,76 @@ fn test_write_fragments_creates_data_files() {
 }
 
 #[test]
+fn test_write_fragments_with_storage_version_2_2() {
+    use lance_file::reader::{CachedFileMetadata, FileReader as LanceFileReader};
+    use lance_io::scheduler::{ScanScheduler, SchedulerConfig};
+    use lance_io::utils::CachedFileSize;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", tmp.path().to_str().unwrap());
+    let c_uri = CString::new(uri.clone()).unwrap();
+
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+    let batch =
+        RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1, 2, 3]))])
+            .unwrap();
+
+    let ffi_schema = schema_to_ffi(&schema);
+    let mut stream = batch_to_ffi_stream(batch);
+    let rc = unsafe {
+        lance_write_fragments_with_storage_version(
+            c_uri.as_ptr(),
+            &ffi_schema,
+            &mut stream,
+            LanceDataStorageVersion::V2_2 as i32,
+            ptr::null(),
+        )
+    };
+    assert_eq!(rc, 0, "lance_write_fragments_with_storage_version failed");
+
+    let versions = lance_c::runtime::block_on(async {
+        let (object_store, _base_path) = lance_io::object_store::ObjectStore::from_uri(&uri)
+            .await
+            .unwrap();
+        let scan_scheduler = ScanScheduler::new(
+            object_store.clone(),
+            SchedulerConfig::max_bandwidth(&object_store),
+        );
+
+        let data_dir = tmp.path().join("data");
+        let lance_files: Vec<_> = std::fs::read_dir(&data_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "lance"))
+            .collect();
+
+        let mut versions = Vec::new();
+        for entry in lance_files {
+            let filename = entry.file_name().to_string_lossy().to_string();
+            let file_path = lance_io::object_store::ObjectStore::extract_path_from_uri(
+                Arc::new(Default::default()),
+                &format!("{}/data/{}", uri, filename),
+            )
+            .unwrap();
+
+            let file_size: CachedFileSize = Default::default();
+            let file_scheduler = scan_scheduler
+                .open_file(&file_path, &file_size)
+                .await
+                .unwrap();
+            let meta: CachedFileMetadata = LanceFileReader::read_all_metadata(&file_scheduler)
+                .await
+                .unwrap();
+            versions.push((meta.major_version, meta.minor_version));
+        }
+        versions
+    });
+
+    assert!(!versions.is_empty(), "expected at least one .lance data file");
+    assert!(versions.iter().all(|version| *version == (2, 2)));
+}
+
+#[test]
 fn test_write_fragments_null_args_returns_error() {
     let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Int32, false)]));
     let batch =
@@ -1455,6 +1525,35 @@ fn test_write_fragments_null_args_returns_error() {
         unsafe { lance_write_fragments(ptr::null(), &ffi_schema, &mut stream, ptr::null()) };
     assert_eq!(result, -1);
     assert_ne!(lance_last_error_code(), LanceErrorCode::Ok);
+}
+
+#[test]
+fn test_write_fragments_with_invalid_storage_version_returns_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", tmp.path().to_str().unwrap());
+    let c_uri = CString::new(uri).unwrap();
+
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+    let batch =
+        RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1]))]).unwrap();
+    let ffi_schema = schema_to_ffi(&schema);
+    let mut stream = batch_to_ffi_stream(batch);
+
+    let rc = unsafe {
+        lance_write_fragments_with_storage_version(
+            c_uri.as_ptr(),
+            &ffi_schema,
+            &mut stream,
+            999,
+            ptr::null(),
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        lance_last_error_code(),
+        LanceErrorCode::InvalidArgument,
+        "invalid storage version should be rejected at the API boundary"
+    );
 }
 
 #[test]

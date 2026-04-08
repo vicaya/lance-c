@@ -288,7 +288,7 @@ namespace lance {
  * @param uri          Directory URI (file://, s3://, etc.)
  * @param schema       Required Arrow schema — stream schema must match.
  * @param stream       ArrowArrayStream to consume. Must not be used after this call.
- * @param storage_opts Key-value storage options, or empty for defaults.
+ * @param storage_opts Object-store key-value storage options, or empty for defaults.
  * @throws lance::Error on failure.
  */
 inline void write_fragments(
@@ -306,6 +306,37 @@ inline void write_fragments(
 
     const char* const* opts_ptr = storage_opts.empty() ? nullptr : kv.data();
     if (lance_write_fragments(uri.c_str(), schema, stream, opts_ptr) != 0) {
+        check_error();
+    }
+}
+
+/**
+ * Write fragment files using an explicit Lance data storage version.
+ *
+ * @param uri             Directory URI (file://, s3://, etc.)
+ * @param schema          Required Arrow schema — stream schema must match.
+ * @param stream          ArrowArrayStream to consume. Must not be used after this call.
+ * @param storage_version Lance data file format version to write.
+ * @param storage_opts    Object-store key-value storage options, or empty for defaults.
+ * @throws lance::Error on failure.
+ */
+inline void write_fragments(
+    const std::string& uri,
+    const ArrowSchema* schema,
+    ArrowArrayStream* stream,
+    LanceDataStorageVersion storage_version,
+    const std::vector<std::pair<std::string, std::string>>& storage_opts = {})
+{
+    std::vector<const char*> kv;
+    for (auto& [k, v] : storage_opts) {
+        kv.push_back(k.c_str());
+        kv.push_back(v.c_str());
+    }
+    kv.push_back(nullptr);
+
+    const char* const* opts_ptr = storage_opts.empty() ? nullptr : kv.data();
+    if (lance_write_fragments_with_storage_version(
+            uri.c_str(), schema, stream, storage_version, opts_ptr) != 0) {
         check_error();
     }
 }

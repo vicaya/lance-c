@@ -283,6 +283,15 @@ void lance_batch_free(LanceBatch* batch);
 
 /* ─── Fragment writer ─── */
 
+typedef enum {
+    LANCE_DATA_STORAGE_VERSION_DEFAULT = 0,
+    LANCE_DATA_STORAGE_VERSION_LEGACY = 1,
+    LANCE_DATA_STORAGE_VERSION_V2_0 = 2,
+    LANCE_DATA_STORAGE_VERSION_V2_1 = 3,
+    LANCE_DATA_STORAGE_VERSION_V2_2 = 4,
+    LANCE_DATA_STORAGE_VERSION_V2_3 = 5,
+} LanceDataStorageVersion;
+
 /**
  * Write an Arrow record batch stream to fragment files at `uri`.
  *
@@ -300,13 +309,40 @@ void lance_batch_free(LanceBatch* batch);
  *                     or the call fails with LANCE_ERR_INVALID_ARGUMENT.
  * @param stream       Arrow C Data Interface stream; consumed by this call —
  *                     do not use the stream after returning.
- * @param storage_opts NULL-terminated key-value pairs ["k","v",NULL], or NULL.
+ * @param storage_opts NULL-terminated object-store key-value pairs
+ *                     ["k","v",NULL], or NULL.
  * @return 0 on success, -1 on error
  */
 int32_t lance_write_fragments(
     const char* uri,
     const struct ArrowSchema* schema,
     struct ArrowArrayStream* stream,
+    const char* const* storage_opts
+);
+
+/**
+ * Write an Arrow record batch stream to fragment files at `uri` using an
+ * explicit Lance data storage version.
+ *
+ * This behaves like lance_write_fragments() but lets the caller choose the
+ * `.lance` file format version for newly written fragment files. Use
+ * LANCE_DATA_STORAGE_VERSION_DEFAULT to preserve the current default behavior.
+ *
+ * @param uri             Directory URI for fragment files (file://, s3://, etc.)
+ * @param schema          Required Arrow schema. The stream schema must match
+ *                        or the call fails with LANCE_ERR_INVALID_ARGUMENT.
+ * @param stream          Arrow C Data Interface stream; consumed by this call —
+ *                        do not use the stream after returning.
+ * @param storage_version Lance data file format version to write.
+ * @param storage_opts    NULL-terminated object-store key-value pairs
+ *                        ["k","v",NULL], or NULL.
+ * @return 0 on success, -1 on error
+ */
+int32_t lance_write_fragments_with_storage_version(
+    const char* uri,
+    const struct ArrowSchema* schema,
+    struct ArrowArrayStream* stream,
+    LanceDataStorageVersion storage_version,
     const char* const* storage_opts
 );
 
