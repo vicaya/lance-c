@@ -1453,9 +1453,11 @@ fn test_write_fragments_with_storage_version_2_2() {
     let c_uri = CString::new(uri.clone()).unwrap();
 
     let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
-    let batch =
-        RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1, 2, 3]))])
-            .unwrap();
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+    )
+    .unwrap();
 
     let ffi_schema = schema_to_ffi(&schema);
     let mut stream = batch_to_ffi_stream(batch);
@@ -1508,7 +1510,10 @@ fn test_write_fragments_with_storage_version_2_2() {
         versions
     });
 
-    assert!(!versions.is_empty(), "expected at least one .lance data file");
+    assert!(
+        !versions.is_empty(),
+        "expected at least one .lance data file"
+    );
     assert!(versions.iter().all(|version| *version == (2, 2)));
 }
 

@@ -111,15 +111,11 @@ pub unsafe extern "C" fn lance_write_fragments_with_storage_version(
     storage_opts: *const *const c_char,
 ) -> i32 {
     ffi_try!(
-        unsafe {
-            write_fragments_inner(
-                uri,
-                schema,
-                stream,
-                storage_opts,
-                LanceDataStorageVersion::into_lance_file_version(storage_version)?,
-            )
-        },
+        LanceDataStorageVersion::into_lance_file_version(storage_version).and_then(
+            |data_storage_version| unsafe {
+                write_fragments_inner(uri, schema, stream, storage_opts, data_storage_version)
+            },
+        ),
         neg
     )
 }
@@ -175,8 +171,10 @@ unsafe fn write_fragments_inner(
         });
     }
 
-    let mut params = WriteParams::default();
-    params.data_storage_version = data_storage_version;
+    let mut params = WriteParams {
+        data_storage_version,
+        ..WriteParams::default()
+    };
     if !opts.is_empty() {
         params.store_params = Some(ObjectStoreParams {
             storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(
