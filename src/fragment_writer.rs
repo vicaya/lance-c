@@ -33,11 +33,49 @@ use arrow::record_batch::RecordBatchReader;
 use arrow_schema::Schema as ArrowSchema;
 use lance::dataset::{InsertBuilder, WriteParams};
 use lance_core::Result;
+use lance_file::version::LanceFileVersion;
 use lance_io::object_store::{ObjectStoreParams, StorageOptionsAccessor};
 
 use crate::error::ffi_try;
 use crate::helpers;
 use crate::runtime::block_on;
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LanceDataStorageVersion {
+    Default = 0,
+    Legacy = 1,
+    V2_0 = 2,
+    V2_1 = 3,
+    V2_2 = 4,
+    V2_3 = 5,
+}
+
+impl LanceDataStorageVersion {
+    fn into_lance_file_version(value: i32) -> Result<Option<LanceFileVersion>> {
+        match value {
+            x if x == Self::Default as i32 => Ok(None),
+            x if x == Self::Legacy as i32 => Ok(Some(LanceFileVersion::Legacy)),
+            x if x == Self::V2_0 as i32 => Ok(Some(LanceFileVersion::V2_0)),
+            x if x == Self::V2_1 as i32 => Ok(Some(LanceFileVersion::V2_1)),
+            x if x == Self::V2_2 as i32 => Ok(Some(LanceFileVersion::V2_2)),
+            x if x == Self::V2_3 as i32 => Ok(Some(LanceFileVersion::V2_3)),
+            _ => Err(lance_core::Error::InvalidInput {
+                source: format!(
+                    "invalid storage_version value: {value}. Expected one of: \
+                     0 (LANCE_DATA_STORAGE_VERSION_DEFAULT), \
+                     1 (LANCE_DATA_STORAGE_VERSION_LEGACY), \
+                     2 (LANCE_DATA_STORAGE_VERSION_V2_0), \
+                     3 (LANCE_DATA_STORAGE_VERSION_V2_1), \
+                     4 (LANCE_DATA_STORAGE_VERSION_V2_2), \
+                     5 (LANCE_DATA_STORAGE_VERSION_V2_3)"
+                )
+                .into(),
+                location: snafu::location!(),
+            }),
+        }
+    }
+}
 
 /// Write an Arrow record batch stream to fragment files at `uri`.
 ///
@@ -63,7 +101,27 @@ pub unsafe extern "C" fn lance_write_fragments(
     storage_opts: *const *const c_char,
 ) -> i32 {
     ffi_try!(
-        unsafe { write_fragments_inner(uri, schema, stream, storage_opts) },
+        unsafe { write_fragments_inner(uri, schema, stream, storage_opts, None) },
+        neg
+    )
+}
+
+/// Write an Arrow record batch stream to fragment files at `uri` using an
+/// explicit Lance data storage version.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lance_write_fragments_with_storage_version(
+    uri: *const c_char,
+    schema: *const FFI_ArrowSchema,
+    stream: *mut FFI_ArrowArrayStream,
+    storage_version: i32,
+    storage_opts: *const *const c_char,
+) -> i32 {
+    ffi_try!(
+        LanceDataStorageVersion::into_lance_file_version(storage_version).and_then(
+            |data_storage_version| unsafe {
+                write_fragments_inner(uri, schema, stream, storage_opts, data_storage_version)
+            },
+        ),
         neg
     )
 }
@@ -73,6 +131,7 @@ unsafe fn write_fragments_inner(
     schema: *const FFI_ArrowSchema,
     stream: *mut FFI_ArrowArrayStream,
     storage_opts: *const *const c_char,
+    data_storage_version: Option<LanceFileVersion>,
 ) -> Result<i32> {
     if uri.is_null() || schema.is_null() || stream.is_null() {
         return Err(lance_core::Error::InvalidInput {
@@ -118,7 +177,10 @@ unsafe fn write_fragments_inner(
         });
     }
 
-    let mut params = WriteParams::default();
+    let mut params = WriteParams {
+        data_storage_version,
+        ..WriteParams::default()
+    };
     if !opts.is_empty() {
         params.store_params = Some(ObjectStoreParams {
             storage_options_accessor: Some(Arc::new(StorageOptionsAccessor::with_static_options(

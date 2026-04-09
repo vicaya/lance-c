@@ -1402,6 +1402,55 @@ fn schema_to_ffi(schema: &Schema) -> FFI_ArrowSchema {
     FFI_ArrowSchema::try_from(schema).expect("schema export must succeed")
 }
 
+fn write_fragments_and_read_versions(storage_version: i32) -> Vec<(u32, u32)> {
+    let tmp = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", tmp.path().to_str().unwrap());
+    let c_uri = CString::new(uri).unwrap();
+
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+    let batch = RecordBatch::try_new(
+        schema.clone(),
+        vec![Arc::new(Int32Array::from(vec![1, 2, 3]))],
+    )
+    .unwrap();
+
+    let ffi_schema = schema_to_ffi(&schema);
+    let mut stream = batch_to_ffi_stream(batch);
+    let rc = unsafe {
+        lance_write_fragments_with_storage_version(
+            c_uri.as_ptr(),
+            &ffi_schema,
+            &mut stream,
+            storage_version,
+            ptr::null(),
+        )
+    };
+    assert_eq!(rc, 0, "lance_write_fragments_with_storage_version failed");
+
+    let data_dir = tmp.path().join("data");
+    let lance_files: Vec<_> = std::fs::read_dir(&data_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "lance"))
+        .collect();
+
+    let mut versions = Vec::new();
+    for entry in lance_files {
+        let file_bytes = std::fs::read(entry.path()).unwrap();
+        assert!(
+            file_bytes.len() >= 8,
+            "expected Lance file {:?} to be at least 8 bytes long to contain a footer, got {} bytes",
+            entry.path(),
+            file_bytes.len()
+        );
+        let footer = &file_bytes[file_bytes.len() - 8..];
+        let major_version = u16::from_le_bytes([footer[0], footer[1]]) as u32;
+        let minor_version = u16::from_le_bytes([footer[2], footer[3]]) as u32;
+        versions.push((major_version, minor_version));
+    }
+    versions
+}
+
 #[test]
 fn test_write_fragments_creates_data_files() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1443,6 +1492,26 @@ fn test_write_fragments_creates_data_files() {
 }
 
 #[test]
+fn test_write_fragments_with_explicit_storage_versions() {
+    let cases = [
+        (LanceDataStorageVersion::Legacy as i32, (0, 2)),
+        (LanceDataStorageVersion::V2_0 as i32, (0, 3)),
+        (LanceDataStorageVersion::V2_1 as i32, (2, 1)),
+        (LanceDataStorageVersion::V2_2 as i32, (2, 2)),
+        (LanceDataStorageVersion::V2_3 as i32, (2, 3)),
+    ];
+
+    for (storage_version, expected_version) in cases {
+        let versions = write_fragments_and_read_versions(storage_version);
+        assert!(
+            !versions.is_empty(),
+            "expected at least one .lance data file"
+        );
+        assert!(versions.iter().all(|version| *version == expected_version));
+    }
+}
+
+#[test]
 fn test_write_fragments_null_args_returns_error() {
     let schema = Arc::new(Schema::new(vec![Field::new("x", DataType::Int32, false)]));
     let batch =
@@ -1455,6 +1524,35 @@ fn test_write_fragments_null_args_returns_error() {
         unsafe { lance_write_fragments(ptr::null(), &ffi_schema, &mut stream, ptr::null()) };
     assert_eq!(result, -1);
     assert_ne!(lance_last_error_code(), LanceErrorCode::Ok);
+}
+
+#[test]
+fn test_write_fragments_with_invalid_storage_version_returns_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let uri = format!("file://{}", tmp.path().to_str().unwrap());
+    let c_uri = CString::new(uri).unwrap();
+
+    let schema = Arc::new(Schema::new(vec![Field::new("id", DataType::Int32, false)]));
+    let batch =
+        RecordBatch::try_new(schema.clone(), vec![Arc::new(Int32Array::from(vec![1]))]).unwrap();
+    let ffi_schema = schema_to_ffi(&schema);
+    let mut stream = batch_to_ffi_stream(batch);
+
+    let rc = unsafe {
+        lance_write_fragments_with_storage_version(
+            c_uri.as_ptr(),
+            &ffi_schema,
+            &mut stream,
+            999,
+            ptr::null(),
+        )
+    };
+    assert_eq!(rc, -1);
+    assert_eq!(
+        lance_last_error_code(),
+        LanceErrorCode::InvalidArgument,
+        "invalid storage version should be rejected at the API boundary"
+    );
 }
 
 #[test]
