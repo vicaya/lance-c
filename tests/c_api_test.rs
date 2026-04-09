@@ -1437,6 +1437,12 @@ fn write_fragments_and_read_versions(storage_version: i32) -> Vec<(u32, u32)> {
     let mut versions = Vec::new();
     for entry in lance_files {
         let file_bytes = std::fs::read(entry.path()).unwrap();
+        assert!(
+            file_bytes.len() >= 8,
+            "expected Lance file {:?} to be at least 8 bytes long to contain a footer, got {} bytes",
+            entry.path(),
+            file_bytes.len()
+        );
         let footer = &file_bytes[file_bytes.len() - 8..];
         let major_version = u16::from_le_bytes([footer[0], footer[1]]) as u32;
         let minor_version = u16::from_le_bytes([footer[2], footer[3]]) as u32;

@@ -320,7 +320,7 @@ inline void write_fragments(
  * @param storage_opts    Object-store key-value storage options, or empty for defaults.
  * @throws lance::Error on failure.
  */
-inline void write_fragments(
+inline void write_fragments_with_storage_version(
     const std::string& uri,
     const ArrowSchema* schema,
     ArrowArrayStream* stream,
@@ -339,17 +339,6 @@ inline void write_fragments(
             uri.c_str(), schema, stream, storage_version, opts_ptr) != 0) {
         check_error();
     }
-}
-
-/// Named alternative to the versioned overload for clearer call sites.
-inline void write_fragments_with_storage_version(
-    const std::string& uri,
-    const ArrowSchema* schema,
-    ArrowArrayStream* stream,
-    LanceDataStorageVersion storage_version,
-    const std::vector<std::pair<std::string, std::string>>& storage_opts = {})
-{
-    write_fragments(uri, schema, stream, storage_version, storage_opts);
 }
 
 } // namespace lance

@@ -62,7 +62,13 @@ impl LanceDataStorageVersion {
             x if x == Self::V2_3 as i32 => Ok(Some(LanceFileVersion::V2_3)),
             _ => Err(lance_core::Error::InvalidInput {
                 source: format!(
-                    "invalid storage_version value: {value}. Expected one of the LanceDataStorageVersion enum values"
+                    "invalid storage_version value: {value}. Expected one of: \
+                     0 (LANCE_DATA_STORAGE_VERSION_DEFAULT), \
+                     1 (LANCE_DATA_STORAGE_VERSION_LEGACY), \
+                     2 (LANCE_DATA_STORAGE_VERSION_V2_0), \
+                     3 (LANCE_DATA_STORAGE_VERSION_V2_1), \
+                     4 (LANCE_DATA_STORAGE_VERSION_V2_2), \
+                     5 (LANCE_DATA_STORAGE_VERSION_V2_3)"
                 )
                 .into(),
                 location: snafu::location!(),
